@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>學生加入｜簡課堂搶答系統</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body data-page="student">
+    <main class="shell">
+      <a class="back-link" href="/">← 首頁</a>
+      <p class="eyebrow">STUDENT ROOM</p>
+      <h1>加入課堂搶答</h1>
+      <form id="join-room-form" class="panel stack">
+        <label>房間代碼<input name="room_id" required autocomplete="off" maxlength="6" placeholder="老師提供的代碼"></label>
+        <label>組別名稱<input name="group_name" required autocomplete="off" maxlength="40" placeholder="例如：第 1 組"></label>
+        <button class="primary" type="submit">加入房間</button>
+      </form>
+      <p id="student-message" class="message" role="status"></p>
+      <section id="student-room" hidden>
+        <div class="status-bar"><span id="phase-label">等待搶答</span><span id="team-label"></span></div>
+        <section id="answer-board" class="answer-board" aria-live="polite"></section>
+        <section id="results-board" class="panel" hidden></section>
+      </section>
+    </main>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

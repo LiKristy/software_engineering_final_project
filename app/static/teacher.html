@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>老師控制台｜簡課堂搶答系統</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body data-page="teacher">
+    <main class="shell">
+      <a class="back-link" href="/">← 首頁</a>
+      <p class="eyebrow">TEACHER CONSOLE</p>
+      <h1>建立搶答房間</h1>
+      <p class="muted">上傳從 Guided Notes 範本匯出的 Excel 檔。題號與空格會自動讀取。</p>
+      <form id="create-room-form" class="panel stack">
+        <label>Guided Notes (.xlsx)<input name="file" type="file" accept=".xlsx" required></label>
+        <label>每組最多獲勝題數（留空代表不限）<input name="max_wins" type="number" min="1" placeholder="例如 2"></label>
+        <label>題組設定（每行一組，例如 Q3,Q4）<textarea name="bundles" rows="3" placeholder="Q3,Q4"></textarea></label>
+        <button class="primary" type="submit">建立房間</button>
+      </form>
+      <p id="teacher-message" class="message" role="status"></p>
+      <section id="created-room" class="panel stack" hidden>
+        <h2>房間已建立</h2>
+        <p>房間代碼：<strong id="room-code" class="room-code"></strong></p>
+        <p>學生加入網址：<a id="student-link"></a></p>
+        <p>投影網址：<a id="projection-link"></a></p>
+        <h3>已加入組別</h3>
+        <ul id="group-list" class="group-list"><li>尚無組別</li></ul>
+        <h3>即時作答進度</h3>
+        <section id="teacher-progress" class="answer-board"></section>
+        <section id="teacher-results" class="panel" hidden></section>
+        <h3>即時作答進度</h3>
+        <section id="teacher-progress" class="answer-board" aria-live="polite"></section>
+        <section id="teacher-results" class="panel" hidden></section>
+        <div class="button-row">
+          <button id="start-race" class="primary" type="button" disabled>開始搶答</button>
+          <button id="end-race" class="danger" type="button" disabled>結束搶答</button>
+          <button id="export-csv" type="button" disabled>匯出紀錄</button>
+          <button id="export-notes" type="button" disabled>匯出學習單</button>
+        </div>
+      </section>
+    </main>
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

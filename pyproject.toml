@@ -1,0 +1,17 @@
+[project]
+name = "simple-classroom-quiz-buzzer"
+version = "0.1.0"
+description = "即時同步的課堂分組搶答系統"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.110,<1.0",
+  "uvicorn[standard]>=0.27,<1.0",
+  "python-multipart>=0.0.9,<1.0",
+  "openpyxl>=3.1,<4.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<9", "httpx>=0.27,<1"]
+
+[tool.uv]
+package = false
