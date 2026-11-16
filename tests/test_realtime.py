@@ -3,26 +3,31 @@ import pytest
 
 from fastapi.testclient import TestClient
 
-from app.api import get_room_service
+from app.api import get_google_sheets_adapter, get_room_service
 from app.database import Database
 from app.main import app
 from app.repositories.room_repository import RoomRepository
 from app.services.room_service import RoomService
+from google_helpers import FakeGoogleSheetsAdapter
 
 
 SINGLE = Path("tests/fixtures/guided-notes-single.xlsx")
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1dHJOnfihH0J2OPeqzkMofJD17TXMsT10PfVDbCqW7aQ/edit"
+
+
+def install_overrides(database):
+    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    app.dependency_overrides[get_google_sheets_adapter] = lambda: FakeGoogleSheetsAdapter(SINGLE.read_bytes())
 
 
 def test_phase_changes_are_broadcast_and_reconnect_gets_current_snapshot(tmp_path):
     database = Database(tmp_path / "realtime.sqlite3")
     database.migrate()
-    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    install_overrides(database)
     try:
         with TestClient(app) as client:
             app.state.database = database
-            room = client.post(
-                "/api/rooms", files={"file": ("single.xlsx", SINGLE.read_bytes())}
-            ).json()
+            room = client.post("/api/rooms", data={"sheet_url": SHEET_URL}).json()
             group = client.post(
                 f"/api/rooms/{room['room_id']}/join", json={"group_name": "第 1 組"}
             ).json()
@@ -55,13 +60,11 @@ def test_phase_changes_are_broadcast_and_reconnect_gets_current_snapshot(tmp_pat
 def test_teacher_phase_commands_require_token_and_valid_transition(tmp_path):
     database = Database(tmp_path / "phase.sqlite3")
     database.migrate()
-    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    install_overrides(database)
     try:
         with TestClient(app) as client:
             app.state.database = database
-            room = client.post(
-                "/api/rooms", files={"file": ("single.xlsx", SINGLE.read_bytes())}
-            ).json()
+            room = client.post("/api/rooms", data={"sheet_url": SHEET_URL}).json()
             denied = client.post(f"/api/rooms/{room['room_id']}/start")
             started = client.post(
                 f"/api/rooms/{room['room_id']}/start",
@@ -82,11 +85,11 @@ def test_teacher_phase_commands_require_token_and_valid_transition(tmp_path):
 def test_submission_events_are_filtered_by_role_and_group(tmp_path):
     database = Database(tmp_path / "private-events.sqlite3")
     database.migrate()
-    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    install_overrides(database)
     try:
         with TestClient(app) as client:
             app.state.database = database
-            room = client.post("/api/rooms", files={"file": ("single.xlsx", SINGLE.read_bytes())}).json()
+            room = client.post("/api/rooms", data={"sheet_url": SHEET_URL}).json()
             groups = [client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": f"組 {i}"}).json() for i in range(2)]
             client.post(f"/api/rooms/{room['room_id']}/start", headers={"X-Teacher-Token": room["teacher_token"]})
             with client.websocket_connect(f"/ws/{room['room_id']}") as teacher, client.websocket_connect(f"/ws/{room['room_id']}") as first, client.websocket_connect(f"/ws/{room['room_id']}") as other, client.websocket_connect(f"/ws/{room['room_id']}") as projection:
@@ -118,11 +121,11 @@ def test_submission_events_are_filtered_by_role_and_group(tmp_path):
 def test_cooldown_is_private_and_restored_on_reconnect(tmp_path):
     database = Database(tmp_path / "cooldown-events.sqlite3")
     database.migrate()
-    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    install_overrides(database)
     try:
         with TestClient(app) as client:
             app.state.database = database
-            room = client.post("/api/rooms", files={"file": ("single.xlsx", SINGLE.read_bytes())}).json()
+            room = client.post("/api/rooms", data={"sheet_url": SHEET_URL}).json()
             groups = [client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": f"第 {i} 組"}).json() for i in (1, 2)]
             client.post(f"/api/rooms/{room['room_id']}/start", headers={"X-Teacher-Token": room["teacher_token"]})
             with client.websocket_connect(f"/ws/{room['room_id']}") as own, client.websocket_connect(f"/ws/{room['room_id']}") as other:
@@ -159,11 +162,11 @@ def test_cooldown_is_private_and_restored_on_reconnect(tmp_path):
 def test_students_only_receive_answers_after_activity_ends(tmp_path):
     database = Database(tmp_path / "result-view.sqlite3")
     database.migrate()
-    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    install_overrides(database)
     try:
         with TestClient(app) as client:
             app.state.database = database
-            room = client.post("/api/rooms", files={"file": ("single.xlsx", SINGLE.read_bytes())}, data={"cooldown_seconds": "0"}).json()
+            room = client.post("/api/rooms", data={"sheet_url": SHEET_URL, "cooldown_seconds": "0"}).json()
             first = client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": "第 1 組"}).json()
             second = client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": "第 2 組"}).json()
             client.post(f"/api/rooms/{room['room_id']}/start", headers={"X-Teacher-Token": room["teacher_token"]})

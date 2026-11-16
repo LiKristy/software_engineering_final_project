@@ -4,7 +4,6 @@ import re
 from typing import Any
 
 from openpyxl import load_workbook
-from openpyxl.utils.cell import coordinate_to_tuple
 
 
 class GuidedNotesError(ValueError):
@@ -74,7 +73,7 @@ def _merged_anchor(ws, row: int, column: int) -> str:
 
 def parse_guided_notes(data: bytes, filename: str = "notes.xlsx") -> ImportedNotes:
     if not filename.lower().endswith(".xlsx"):
-        raise GuidedNotesError("請上傳從範本匯出的 .xlsx 檔案。")
+        raise GuidedNotesError("Google Sheet 匯出的試算表格式不受支援。")
     try:
         workbook = load_workbook(BytesIO(data), data_only=False)
     except Exception as exc:
@@ -176,25 +175,3 @@ def parse_guided_notes(data: bytes, filename: str = "notes.xlsx") -> ImportedNot
     return ImportedNotes(worksheet_name=ws.title, questions=questions)
 
 
-def fill_guided_notes(
-    data: bytes,
-    worksheet_name: str,
-    answers: dict[str, str],
-) -> bytes:
-    workbook = load_workbook(BytesIO(data))
-    if worksheet_name not in workbook.sheetnames:
-        raise GuidedNotesError("來源工作表不存在，無法回填。")
-    ws = workbook[worksheet_name]
-    for coordinate, answer in answers.items():
-        try:
-            coordinate_to_tuple(coordinate)
-            cell = ws[coordinate]
-        except Exception as exc:
-            raise GuidedNotesError("答案空格位置無效。") from exc
-        if cell.__class__.__name__ == "MergedCell":
-            raise GuidedNotesError(f"答案空格 {coordinate} 不是合併儲存格的起始格。")
-        cell.value = answer
-    output = BytesIO()
-    workbook.save(output)
-    workbook.close()
-    return output.getvalue()

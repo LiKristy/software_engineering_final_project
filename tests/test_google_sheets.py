@@ -77,12 +77,13 @@ def test_google_grid_adapter_preserves_template_questions_groups_and_slots(fixtu
     source.close()
 
 
-def test_readme_keeps_xlsx_flow_and_documents_google_requirements():
+def test_readme_documents_google_only_source_and_writeback():
     readme = open("README.md", encoding="utf-8").read()
-    assert "Google Sheets API 與 Google Drive API" in readme
+    assert "啟用 Google Sheets API" in readme
     assert "Service Account 電子郵件" in readme
     assert "GOOGLE_SERVICE_ACCOUNT_FILE" in readme
-    assert "未設定 Service Account 時，原有 `.xlsx` 上傳流程仍可使用" in readme
+    assert "不提供 `.xlsx` 上傳或副本下載" in readme
+    assert "完整歷史 CSV" in readme
 
 
 class ApiRequest:
@@ -119,15 +120,6 @@ class FakeSheetsService:
         return ApiRequest({"replies": []})
 
 
-class FakeDriveService:
-    def files(self):
-        return self
-
-    def export(self, **kwargs):
-        self.export_args = kwargs
-        return ApiRequest(b"xlsx-snapshot")
-
-
 def test_google_adapter_reads_sheet_and_performs_one_atomic_batch_request():
     response = {"sheets": [{
         "properties": {"sheetId": 77, "title": "學習單"},
@@ -138,13 +130,11 @@ def test_google_adapter_reads_sheet_and_performs_one_atomic_batch_request():
         ]}],
     }]}
     sheets = FakeSheetsService(response)
-    drive = FakeDriveService()
-    adapter = GoogleSheetsAdapter(sheets, drive)
-    data, title, gid, snapshot = adapter.import_sheet(GoogleSheetReference(VALID_ID, 77))
+    adapter = GoogleSheetsAdapter(sheets)
+    data, title, gid = adapter.import_sheet(GoogleSheetReference(VALID_ID, 77))
     assert parse_guided_notes(data, "mock.xlsx").questions[0].id == "Q1"
-    assert (title, gid, snapshot) == ("學習單", 77, b"xlsx-snapshot")
+    assert (title, gid) == ("學習單", 77)
     assert sheets.get_args["includeGridData"] is True
-    assert drive.export_args["mimeType"].endswith("spreadsheetml.sheet")
     assert adapter.read_cells(VALID_ID, title, ["B2", "C3"]) == {"B2": "現有值", "C3": None}
     adapter.write_cells(VALID_ID, gid, [{"coordinate": "B2", "value": "回填值"}])
     assert len(sheets.batch["body"]["requests"]) == 1

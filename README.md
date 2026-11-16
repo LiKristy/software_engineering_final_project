@@ -1,6 +1,6 @@
 # 簡課堂搶答系統
 
-以 Python、FastAPI、SQLite、WebSocket 與原生 HTML/CSS/JavaScript 建置的課堂分組搶答系統。老師上傳 Guided Notes `.xlsx` 範本建立房間，學生以房間代碼和組名加入；提交、審核、排名、結果與匯出由伺服端處理。
+以 Python、FastAPI、SQLite、WebSocket 與原生 HTML/CSS/JavaScript 建置的課堂分組搶答系統。老師貼上 Guided Notes Google Sheet 連結建立房間，學生以房間代碼和組名加入；提交、審核、排名、結果與匯出由伺服端處理。
 
 ## 環境需求
 
@@ -12,42 +12,43 @@
 ## 安裝與啟動
 
 ```sh
+cd /path/to/software_engineering_final_project
 uv sync --extra dev
+cp .env.example .env
 uv run python -m app.init_db
 uv run uvicorn app.main:app --reload
 ```
 
 開啟 `http://127.0.0.1:8000`。老師控制台位於 `/teacher`，學生加入頁位於 `/student`，健康檢查為 `/health`。SQLite 資料庫預設建立在 `data/classroom_quiz.sqlite3`；應用程式啟動時會自動套用遷移。手動初始化命令可重複執行。
 
-複製 `.env.example` 為 `.env` 可調整本機設定；應用程式會從工作目錄載入 `.env`，`.env`、資料庫和虛擬環境已列入 `.gitignore`。範例設定不放任何憑證。
+從 repository 根目錄啟動命令，讓應用程式載入根目錄 `.env`。`.env`、資料庫、虛擬環境及 `credential/` 已列入 `.gitignore`。`.env.example` 只提供路徑範例，絕不放金鑰內容。
 
 ## 使用流程
 
-1. 老師上傳 Guided Notes 單題或題組 `.xlsx` 範本，或提供 Google Sheet 連結；可設定 Q3,Q4 等題組、每組獲勝題數上限與得題冷卻秒數（預設 30，範圍 0–3600，0 停用）。
+1. 老師提供 Guided Notes Google Sheet 連結建立房間；可設定 Q3,Q4 等題組、每組獲勝題數上限與得題冷卻秒數（預設 30，範圍 0–3600，0 停用）。
 2. 把房間代碼和學生加入網址提供給各組；每組以共用組名加入。同組只允許一個有效視窗，原視窗可使用工作階段 token 重連。
 3. 老師開始搶答後，學生填寫題目或題組並送出。題組答案會以一筆原子提交處理；其他學生不會收到答案、作答狀態或排名。
 4. 老師可查看即時候選順位並駁回無效答案。系統自動略過被駁回或超過獲勝上限的候選，更新得主與排行榜。
-5. 老師結束活動後，所有學生可查看結果。老師可下載完整歷史 CSV，或下載自動回填得主答案的 Guided Notes 副本。Google Sheet 房間另可使用「回填至 Google Sheet」；系統會檢查儲存格是否遭外部修改，確認後才一次批次寫入原表。
+5. 老師結束活動後，所有學生可查看結果。老師可下載完整歷史 CSV，並可將得主答案回填至原 Google Sheet；系統會檢查儲存格是否遭外部修改，確認後才一次批次寫入原表。
 6. 老師可開啟房間建立時提供的投影連結；投影頁會顯示開始倒數、各題得主及組別得分，不含控制按鈕。
 
 老師控制台使用單一即時進度面板與單一結果面板；學生在活動結束前只看得到自己的送出狀態，結束後作答表單會收起並顯示全班得主答案（未有人取得的題目標示「無得主」）。
 
 ### Guided Notes 範本
 
-匯入器讀取工作表「學習單」的「題號」與「作答」欄位，也支援 `[Q1]` 這類填空標籤。原始檔保存在房間資料中，回填匯出會產生新檔，不會修改原始範本。驗收用的公開範本副本位於 `tests/fixtures/`。
+系統從 Google Sheet 讀取題號與答案空格欄位，也支援 `[Q1]` 這類填空標籤；建立房間時會將必要的題目結構與欄位映射保存在房間資料中。回填直接寫入原始 Google Sheet，不產生講義副本。驗收用的解析器範本 fixture 位於 `tests/fixtures/`。
 
 冷卻從組別成為目前有效得主時開始；題組一次得主事件只開始一次冷卻，但題組內每題仍分別計入獲勝上限。駁回得主會重算得主，解除已失效且沒有其他有效得主來源的原組冷卻，並為遞補組別啟動冷卻。冷卻期限由伺服器交易判斷，學生頁倒數僅供顯示。
 
-也可使用 Google Sheets 連結建立房間。需在 Google Cloud 啟用 Google Sheets API 與 Google Drive API，建立 Service Account，並將來源試算表分享給該 Service Account 電子郵件（回填需編輯權限）。老師可貼標準格式 `https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit`，也可用 `?gid=工作表ID` 或 `#gid=工作表ID` 指定工作表。系統只接受 HTTPS 的 `docs.google.com/spreadsheets/d/...` 連結。將金鑰 JSON 存放在 repo 外，`.env` 只設定其檔案路徑 `GOOGLE_SERVICE_ACCOUNT_FILE=/secure/path/service-account.json`；絕不可複製金鑰內容到 repo、文件、日誌或畫面。`.env` 和常見本機資料目錄已由 `.gitignore` 排除。未設定 Service Account 時，原有 `.xlsx` 上傳流程仍可使用。
+建立 Google Cloud 專案並啟用 Google Sheets API，建立 Service Account，將來源試算表分享給該 Service Account 電子郵件；若要回填，請授予編輯權限。老師貼標準格式 `https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit`，也可用 `?gid=工作表ID` 或 `#gid=工作表ID` 指定工作表。系統只接受 HTTPS 的 `docs.google.com/spreadsheets/d/...` 連結。將 Service Account JSON 放入被忽略的 `credential/` 目錄，在 `.env` 設定相對於 repository 根目錄的路徑，例如 `GOOGLE_SERVICE_ACCOUNT_FILE=credential/service-account.json`。絕不可複製金鑰內容到 repo、文件、日誌或畫面。建立房間一律使用 Google Sheet；系統不提供 `.xlsx` 上傳或副本下載。
 
 ## 設定
 
 | 變數 | 預設值 | 說明 |
 | --- | --- | --- |
 | `DATABASE_PATH` | `data/classroom_quiz.sqlite3` | SQLite 檔案位置 |
-| `MAX_UPLOAD_BYTES` | `10485760` | 上傳檔案大小上限（10 MiB） |
 | `SESSION_TTL_SECONDS` | `300` | 組別閒置連線租約秒數 |
-| `GOOGLE_SERVICE_ACCOUNT_FILE` | 空（選用） | repo 外 Service Account JSON 檔案路徑；需 Google Sheets/Drive API 時設定 |
+| `GOOGLE_SERVICE_ACCOUNT_FILE` | 空 | Service Account JSON 檔案路徑；建立房間及回填 Google Sheets 必須設定 |
 
 ## 測試與檢查
 
@@ -57,7 +58,7 @@ node --check app/static/app.js
 npm exec -- openspec instructions apply --change "simple-classroom-quiz-buzzer" --json
 ```
 
-測試涵蓋實際 Guided Notes 範本解析、Google Sheets mock 匯入與原子回填、房間與單一組別會話、WebSocket 階段／冷卻同步與角色過濾、併發提交順位、題組原子性、審核遞補、獲勝上限、結果視圖、CSV/XLSX 匯出及上傳限制。
+測試涵蓋 Guided Notes 結構解析、Google Sheets mock 匯入與原子回填、房間與單一組別會話、WebSocket 階段／冷卻同步與角色過濾、併發提交順位、題組原子性、審核遞補、獲勝上限、結果視圖、CSV 匯出及舊房間資料相容性。
 
 ## 部署注意
 

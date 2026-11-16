@@ -11,14 +11,9 @@
       <a class="back-link" href="/">← 首頁</a>
       <p class="eyebrow">TEACHER CONSOLE</p>
       <h1>建立搶答房間</h1>
-      <p class="muted">上傳 Excel 範本或貼上 Guided Notes Google Sheet 連結；題號與空格會自動讀取。</p>
+      <p class="muted">貼上 Guided Notes Google Sheet 連結；題號與空格會自動讀取。</p>
       <form id="create-room-form" class="panel stack">
-        <fieldset><legend>題目來源</legend>
-          <label><input type="radio" name="source_mode" value="xlsx" checked> Excel 檔案</label>
-          <label><input type="radio" name="source_mode" value="google"> Google Sheet</label>
-        </fieldset>
-        <label id="xlsx-source">Guided Notes (.xlsx)<input name="file" type="file" accept=".xlsx" required></label>
-        <label id="google-source" hidden>Google Sheet 連結<input name="sheet_url" type="url" placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=..." disabled></label>
+        <label>Guided Notes Google Sheet 連結<input name="sheet_url" type="url" required placeholder="https://docs.google.com/spreadsheets/d/.../edit?gid=..."></label>
         <label>每組最多獲勝題數（留空代表不限）<input name="max_wins" type="number" min="1" placeholder="例如 2"></label>
         <label>得題後冷卻秒數（0 代表停用）<input name="cooldown_seconds" type="number" min="0" max="3600" value="30" required></label>
         <label>題組設定（每行一組，例如 Q3,Q4）<textarea name="bundles" rows="3" placeholder="Q3,Q4"></textarea></label>
@@ -39,11 +34,10 @@
           <button id="start-race" class="primary" type="button" disabled>開始搶答</button>
           <button id="end-race" class="danger" type="button" disabled>結束搶答</button>
           <button id="export-csv" type="button" disabled>匯出紀錄</button>
-          <button id="export-notes" type="button" disabled>匯出學習單</button>
           <button id="google-backfill" type="button" hidden>回填至 Google Sheet</button>
         </div>
       </section>
     </main>
-    <script src="/static/app.js" defer></script>
+    <script src="/static/app.js?v=google-sheets-only-1" defer></script>
   </body>
 </html>

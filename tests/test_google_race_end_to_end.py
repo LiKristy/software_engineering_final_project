@@ -1,8 +1,6 @@
 from pathlib import Path
 
 from fastapi.testclient import TestClient
-from openpyxl import load_workbook
-from io import BytesIO
 
 from app.api import get_google_sheets_adapter, get_room_service
 from app.database import Database
@@ -20,7 +18,7 @@ class MockGoogleApi:
         self.cells = {}
 
     def import_sheet(self, reference):
-        return NOTES, "學習單", 77, NOTES
+        return NOTES, "學習單", 77
 
     def read_cells(self, spreadsheet_id, worksheet_name, coordinates):
         return {coordinate: self.cells.get(coordinate) for coordinate in coordinates}
@@ -88,10 +86,7 @@ def test_google_room_full_race_and_exports_end_to_end(tmp_path):
             backfilled = client.post(f"/api/rooms/{room['room_id']}/google-sheet/backfill", headers=teacher_headers)
             assert backfilled.status_code == 200 and backfilled.json()["status"] == "synced"
             assert google.cells
-            xlsx = client.get(f"/api/rooms/{room['room_id']}/export/guided-notes.xlsx", headers=teacher_headers)
-            workbook = load_workbook(BytesIO(xlsx.content), data_only=True)
-            assert workbook["學習單"]
-            workbook.close()
+            assert client.get(f"/api/rooms/{room['room_id']}/export/guided-notes.xlsx", headers=teacher_headers).status_code == 404
 
             with client.websocket_connect(f"/ws/{room['room_id']}") as student:
                 student.send_json({"role": "student", "group_id": groups[2]["group_id"], "token": groups[2]["group_token"]})

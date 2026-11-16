@@ -3,11 +3,12 @@ import re
 
 from fastapi.testclient import TestClient
 
-from app.api import get_room_service
+from app.api import get_google_sheets_adapter, get_room_service
 from app.database import Database
 from app.main import app
 from app.repositories.room_repository import RoomRepository
 from app.services.room_service import RoomService
+from google_helpers import FakeGoogleSheetsAdapter
 
 
 def test_student_and_teacher_pages_are_served():
@@ -18,7 +19,10 @@ def test_student_and_teacher_pages_are_served():
     assert student.status_code == teacher.status_code == 200
     assert 'data-page="student"' in student.text
     assert 'id="answer-board"' in student.text
-    assert 'name="file"' in teacher.text
+    assert 'name="sheet_url"' in teacher.text
+    assert 'type="url" required' in teacher.text
+    assert 'type="file"' not in teacher.text
+    assert 'source_mode' not in teacher.text
     ids = re.findall(r'\bid="([^"]+)"', teacher.text)
     assert len(ids) == len(set(ids))
     assert 'id="teacher-progress"' in teacher.text
@@ -51,16 +55,19 @@ def test_teacher_websocket_updates_target_single_progress_and_result_elements():
 def test_question_api_returns_exact_fields_for_both_templates(tmp_path):
     database = Database(tmp_path / "ui.sqlite3")
     database.migrate()
+    single = Path("tests/fixtures/guided-notes-single.xlsx").read_bytes()
+    group_bytes = Path("tests/fixtures/guided-notes-group.xlsx").read_bytes()
     app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    adapter = FakeGoogleSheetsAdapter([single, group_bytes])
+    app.dependency_overrides[get_google_sheets_adapter] = lambda: adapter
     try:
         with TestClient(app) as client:
             single = client.post(
-                "/api/rooms", files={"file": ("single.xlsx", Path("tests/fixtures/guided-notes-single.xlsx").read_bytes())}
+                "/api/rooms", data={"sheet_url": "https://docs.google.com/spreadsheets/d/1dHJOnfihH0J2OPeqzkMofJD17TXMsT10PfVDbCqW7aQ/edit"}
             ).json()
             group = client.post(
                 "/api/rooms",
-                files={"file": ("group.xlsx", Path("tests/fixtures/guided-notes-group.xlsx").read_bytes())},
-                data={"question_bundles": '[["Q3", "Q4"]]'},
+                data={"sheet_url": "https://docs.google.com/spreadsheets/d/1dHJOnfihH0J2OPeqzkMofJD17TXMsT10PfVDbCqW7aQ/edit", "question_bundles": '[["Q3", "Q4"]]'},
             ).json()
             single_questions = client.get(f"/api/rooms/{single['room_id']}/questions").json()["questions"]
             group_questions = client.get(f"/api/rooms/{group['room_id']}/questions").json()["questions"]

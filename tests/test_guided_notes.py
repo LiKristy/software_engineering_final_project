@@ -2,7 +2,7 @@ from io import BytesIO
 
 from openpyxl import Workbook, load_workbook
 
-from app.guided_notes import GuidedNotesError, fill_guided_notes, parse_guided_notes
+from app.guided_notes import GuidedNotesError, parse_guided_notes
 
 
 FIXTURES = "tests/fixtures"
@@ -50,24 +50,12 @@ def test_explicit_q_tag_maps_to_its_cell():
     ]
 
 
-def test_fill_answers_preserves_original_workbook_and_layout():
-    original = open(f"{FIXTURES}/guided-notes-group.xlsx", "rb").read()
-    result = fill_guided_notes(original, "學習單", {"H5": "CPU", "H6": "作業系統"})
-    original_wb = load_workbook(BytesIO(original))
-    output_wb = load_workbook(BytesIO(result))
-
-    assert original_wb["學習單"]["H5"].value is None
-    assert output_wb["學習單"]["H5"].value == "CPU"
-    assert output_wb["學習單"]["H6"].value == "作業系統"
-    assert "B5:B6" in {str(rng) for rng in output_wb["學習單"].merged_cells.ranges}
-
-
-def test_rejects_missing_sheet_and_non_xlsx():
+def test_rejects_unsupported_parser_input_format():
     data = open(f"{FIXTURES}/guided-notes-single.xlsx", "rb").read()
 
     try:
         parse_guided_notes(data, "notes.csv")
     except GuidedNotesError as exc:
-        assert ".xlsx" in str(exc)
+        assert "格式不受支援" in str(exc)
     else:
-        raise AssertionError("CSV upload should be rejected")
+        raise AssertionError("Unsupported parser input should be rejected")

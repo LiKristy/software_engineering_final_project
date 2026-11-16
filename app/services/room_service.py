@@ -6,11 +6,10 @@ import string
 import time
 import unicodedata
 import sqlite3
-from zipfile import is_zipfile
 from io import BytesIO
 from openpyxl import load_workbook
 
-from app.guided_notes import fill_guided_notes, parse_guided_notes
+from app.guided_notes import parse_guided_notes
 from app.config import get_settings
 from app.repositories.room_repository import RoomRepository, CooldownActive
 
@@ -135,16 +134,11 @@ class RoomService:
         reference = parse_google_sheet_url(sheet_url)
         try:
             adapter = adapter or GoogleSheetsAdapter()
-            parsed_data, title, gid, snapshot = adapter.import_sheet(reference)
-            if len(snapshot) > get_settings().max_upload_bytes:
-                raise RoomError("Google Sheet 匯出快照超過檔案大小限制。", 413)
-            if not is_zipfile(BytesIO(snapshot)):
-                raise RoomError("Google Sheet 未能匯出有效的 .xlsx 快照。", 400)
-            # Parse the source grid for its live mapping, but keep Drive's full XLSX export for later downloads.
+            parsed_data, title, gid = adapter.import_sheet(reference)
             result = self.create_room(
                 parsed_data, "google-guided-notes.xlsx", max_wins, question_bundles,
                 source_type="google_sheet", google_spreadsheet_id=reference.spreadsheet_id,
-                google_sheet_gid=gid, workbook_blob=snapshot, cooldown_seconds=cooldown_seconds,
+                google_sheet_gid=gid, workbook_blob=parsed_data, cooldown_seconds=cooldown_seconds,
             )
             result["source_type"] = "google_sheet"
             return result
@@ -317,26 +311,6 @@ class RoomService:
         scores = [{"group_id": group["id"], "group_name": group["name"], "wins": wins.get(group["id"], 0)} for group in self.list_groups(room_id)]
         scores.sort(key=lambda entry: (-entry["wins"], entry["group_name"].casefold()))
         return {"questions": questions, "winners": winners, "scores": scores, "progress": progress}
-
-    def export_guided_notes(self, room_id: str) -> bytes:
-        room = self.rooms.get(room_id)
-        if room is None:
-            raise RoomError("找不到房間。", 404)
-        results = self.results(room_id)
-        answers = {}
-        worksheet_name = None
-        for winner in results["winners"].values():
-            for answer in winner["answers"]:
-                answers[answer["coordinate"]] = answer["answer"]
-                worksheet_name = answer["worksheet"]
-        if worksheet_name is None:
-            # Keep an unchanged valid workbook when no question has a winner.
-            from openpyxl import load_workbook
-            from io import BytesIO
-            workbook = load_workbook(BytesIO(room["workbook_blob"]))
-            worksheet_name = "學習單" if "學習單" in workbook.sheetnames else workbook.sheetnames[0]
-            workbook.close()
-        return fill_guided_notes(room["workbook_blob"], worksheet_name, answers)
 
     def writeback_google_sheet(self, room_id: str, adapter=None) -> dict:
         from app.services.google_sheets import GoogleSheetsAdapter, GoogleSheetsError

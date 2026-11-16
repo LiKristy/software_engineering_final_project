@@ -1,29 +1,34 @@
 from pathlib import Path
 import csv
-from io import StringIO, BytesIO
-from openpyxl import load_workbook
+from io import StringIO
 from concurrent.futures import ThreadPoolExecutor
 
 from fastapi.testclient import TestClient
 
-from app.api import get_room_service
+from app.api import get_google_sheets_adapter, get_room_service
 from app.database import Database
 from app.main import app
 from app.repositories.room_repository import RoomRepository
 from app.services.room_service import RoomService
+from google_helpers import FakeGoogleSheetsAdapter
 
 NOTES = Path("tests/fixtures/guided-notes-single.xlsx")
 GROUP_NOTES = Path("tests/fixtures/guided-notes-group.xlsx")
 
 
+def install_overrides(database, workbook):
+    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    app.dependency_overrides[get_google_sheets_adapter] = lambda: FakeGoogleSheetsAdapter(workbook.read_bytes())
+
+
 def test_atomic_bundle_submission_ranking_review_and_cap(tmp_path):
     database = Database(tmp_path / "race.sqlite3")
     database.migrate()
-    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    install_overrides(database, NOTES)
     try:
         with TestClient(app) as client:
             app.state.database = database
-            room = client.post("/api/rooms", files={"file": ("notes.xlsx", NOTES.read_bytes())}, data={"max_wins": "2", "cooldown_seconds": "0", "question_bundles": '[["Q3","Q4"]]'}).json()
+            room = client.post("/api/rooms", data={"sheet_url": "https://docs.google.com/spreadsheets/d/1dHJOnfihH0J2OPeqzkMofJD17TXMsT10PfVDbCqW7aQ/edit", "max_wins": "2", "cooldown_seconds": "0", "question_bundles": '[["Q3","Q4"]]'}).json()
             questions = client.get(f"/api/rooms/{room['room_id']}/questions").json()["questions"]
             groups = [client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": f"第 {i} 組"}).json() for i in range(1, 4)]
             client.post(f"/api/rooms/{room['room_id']}/start", headers={"X-Teacher-Token": room["teacher_token"]})
@@ -49,7 +54,7 @@ def test_atomic_bundle_submission_ranking_review_and_cap(tmp_path):
             headers = {"X-Teacher-Token": room["teacher_token"]}
             assert client.get(f"/api/rooms/{room['room_id']}/results").status_code == 403
             assert client.get(f"/api/rooms/{room['room_id']}/export/history.csv").status_code == 403
-            assert client.get(f"/api/rooms/{room['room_id']}/export/guided-notes.xlsx").status_code == 403
+            assert client.get(f"/api/rooms/{room['room_id']}/export/guided-notes.xlsx").status_code == 404
             results = client.get(f"/api/rooms/{room['room_id']}/results", headers=headers).json()
             assert len(results["scores"]) == 3
             assert any(score["group_id"] == groups[2]["group_id"] and score["wins"] == 0 for score in results["scores"])
@@ -68,15 +73,6 @@ def test_atomic_bundle_submission_ranking_review_and_cap(tmp_path):
             csv_rows = list(csv.reader(StringIO(csv_response.content.decode("utf-8-sig"))))
             assert csv_rows[0][:6] == ["題號", "空格標記", "組別", "送出答案", "伺服器接收時間", "搶答排名"]
             assert any(row[0] == "Q3" and row[2] == "第 1 組" and row[5] == "1" for row in csv_rows[1:])
-            notes_response = client.get(f"/api/rooms/{room['room_id']}/export/guided-notes.xlsx", headers=headers)
-            assert notes_response.status_code == 200
-            exported = load_workbook(BytesIO(notes_response.content), data_only=False)
-            original = load_workbook(BytesIO(NOTES.read_bytes()), data_only=False)
-            slots = qbundle[0]["slots"]
-            coordinate = slots[0]["cell_coordinate"]
-            assert exported[slots[0]["worksheet_name"]][coordinate].value == "第 1 組答案"
-            assert original[slots[0]["worksheet_name"]][coordinate].value != "第 1 組答案"
-            exported.close(); original.close()
             client.post(f"/api/rooms/{room['room_id']}/end", headers=headers)
             assert client.post(f"/api/rooms/{room['room_id']}/submissions", json={"group_id": groups[2]["group_id"], "group_token": groups[2]["group_token"], "bundle_id": "Q2", "answers": {}}).status_code == 409
             with client.websocket_connect(f"/ws/{room['room_id']}") as socket:
@@ -89,27 +85,27 @@ def test_atomic_bundle_submission_ranking_review_and_cap(tmp_path):
         app.dependency_overrides.clear()
 
 
-def test_guided_notes_export_fills_group_slots_and_leaves_no_winner_blank(tmp_path):
+def test_guided_notes_copy_download_endpoint_is_removed_for_new_and_legacy_rooms(tmp_path):
     database = Database(tmp_path / "notes-export.sqlite3")
     database.migrate()
-    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    install_overrides(database, GROUP_NOTES)
     try:
         with TestClient(app) as client:
             app.state.database = database
-            room = client.post("/api/rooms", files={"file": ("group.xlsx", GROUP_NOTES.read_bytes())}).json()
-            group = client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": "答案組"}).json()
-            questions = client.get(f"/api/rooms/{room['room_id']}/questions").json()["questions"]
-            client.post(f"/api/rooms/{room['room_id']}/start", headers={"X-Teacher-Token": room["teacher_token"]})
-            question = questions[0]
-            answers = {question["slots"][0]["id"]: "第一空", question["slots"][1]["id"]: "第二空"}
-            submitted = client.post(f"/api/rooms/{room['room_id']}/submissions", json={"group_id": group["group_id"], "group_token": group["group_token"], "bundle_id": question["bundle_id"], "answers": answers})
-            assert submitted.status_code == 200
-            response = client.get(f"/api/rooms/{room['room_id']}/export/guided-notes.xlsx", headers={"X-Teacher-Token": room["teacher_token"]})
-            output = load_workbook(BytesIO(response.content))
-            assert output["學習單"]["H5"].value == "第一空"
-            assert output["學習單"]["H6"].value == "第二空"
-            assert output["學習單"]["H7"].value is None
-            output.close()
+            room = client.post("/api/rooms", data={"sheet_url": "https://docs.google.com/spreadsheets/d/1dHJOnfihH0J2OPeqzkMofJD17TXMsT10PfVDbCqW7aQ/edit"}).json()
+            legacy = RoomService(RoomRepository(database)).create_room(
+                GROUP_NOTES.read_bytes(), "legacy.xlsx", source_type="upload"
+            )
+            headers = {"X-Teacher-Token": room["teacher_token"]}
+            for room_id, token in ((room["room_id"], headers), (legacy["room_id"], {"X-Teacher-Token": legacy["teacher_token"]})):
+                response = client.get(
+                    f"/api/rooms/{room_id}/export/guided-notes.xlsx", headers=token
+                )
+                assert response.status_code == 404
+            teacher_html = client.get("/teacher").text
+            script = Path("app/static/app.js").read_text(encoding="utf-8")
+            assert 'id="export-notes"' not in teacher_html
+            assert "export-notes" not in script
     finally:
         app.dependency_overrides.clear()
 
@@ -117,11 +113,11 @@ def test_guided_notes_export_fills_group_slots_and_leaves_no_winner_blank(tmp_pa
 def test_concurrent_receipts_have_stable_server_sequence(tmp_path):
     database = Database(tmp_path / "concurrent.sqlite3")
     database.migrate()
-    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    install_overrides(database, NOTES)
     try:
         with TestClient(app) as client:
             app.state.database = database
-            room = client.post("/api/rooms", files={"file": ("single.xlsx", NOTES.read_bytes())}).json()
+            room = client.post("/api/rooms", data={"sheet_url": "https://docs.google.com/spreadsheets/d/1dHJOnfihH0J2OPeqzkMofJD17TXMsT10PfVDbCqW7aQ/edit"}).json()
             questions = client.get(f"/api/rooms/{room['room_id']}/questions").json()["questions"]
             groups = [client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": f"同時組 {i}"}).json() for i in range(2)]
             client.post(f"/api/rooms/{room['room_id']}/start", headers={"X-Teacher-Token": room["teacher_token"]})

@@ -20,7 +20,7 @@ class FakeSheet:
         self.write_calls = []
 
     def import_sheet(self, reference):
-        return NOTES, "學習單", 77, NOTES
+        return NOTES, "學習單", 77
 
     def read_cells(self, spreadsheet_id, worksheet_name, coordinates):
         if self.read_error:
@@ -125,6 +125,4 @@ def test_backfill_after_teacher_rejection_replaces_previously_written_winner(tmp
     with database.connect() as connection:
         stored = connection.execute("SELECT workbook_blob FROM rooms WHERE id=?", (room["room_id"],)).fetchone()[0]
     assert bytes(stored) == NOTES
-    exported = service.export_guided_notes(room["room_id"])
-    assert exported.startswith(b"PK")
     assert bytes(stored) == NOTES  # local XLSX export never writes to the Google source

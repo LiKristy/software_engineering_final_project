@@ -71,18 +71,6 @@ function initTeacher() {
   const form = $("#create-room-form");
   if (!form) return;
   restoreTeacher();
-  const sourceRadios = [...form.querySelectorAll('[name="source_mode"]')];
-  const syncSourceFields = () => {
-    const google = form.elements.source_mode.value === "google";
-    form.elements.file.disabled = google;
-    form.elements.file.required = !google;
-    form.elements.sheet_url.disabled = !google;
-    form.elements.sheet_url.required = google;
-    $("#xlsx-source").hidden = google;
-    $("#google-source").hidden = !google;
-  };
-  sourceRadios.forEach(radio => radio.addEventListener("change", syncSourceFields));
-  syncSourceFields();
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const message = $("#teacher-message");
@@ -93,8 +81,8 @@ function initTeacher() {
       data.set("question_bundles", JSON.stringify(parseBundles(form.elements.bundles.value)));
       if (!form.elements.max_wins.value) data.delete("max_wins");
       const room = await api("/api/rooms", { method: "POST", body: data });
-      sessionStorage.setItem("quiz-teacher", JSON.stringify({roomId: room.room_id, token: room.teacher_token, projectionUrl: room.projection_url, sourceType: room.source_type || (data.has("sheet_url") ? "google_sheet" : "upload")}));
-      showTeacherRoom(room.room_id, room.projection_url, room.source_type || (data.has("sheet_url") ? "google_sheet" : "upload"));
+      sessionStorage.setItem("quiz-teacher", JSON.stringify({roomId: room.room_id, token: room.teacher_token, projectionUrl: room.projection_url, sourceType: room.source_type}));
+      showTeacherRoom(room.room_id, room.projection_url, room.source_type);
       message.textContent = `房間已建立，共 ${room.question_count} 題。`;
       form.hidden = true;
       await refreshGroups();
@@ -106,7 +94,6 @@ function initTeacher() {
   $("#start-race")?.addEventListener("click", () => changePhase("start"));
   $("#end-race")?.addEventListener("click", () => changePhase("end"));
   $("#export-csv")?.addEventListener("click", () => downloadTeacherFile("history.csv", room => `/api/rooms/${encodeURIComponent(room.roomId)}/export/history.csv`));
-  $("#export-notes")?.addEventListener("click", () => downloadTeacherFile("guided-notes.xlsx", room => `/api/rooms/${encodeURIComponent(room.roomId)}/export/guided-notes.xlsx`));
   $("#google-backfill")?.addEventListener("click", backfillGoogleSheet);
 }
 
@@ -147,9 +134,10 @@ function showTeacherRoom(roomId, projectionUrl, sourceType = "upload") {
   projectionLink.href = `${location.origin}${projectionUrl}`;
   projectionLink.textContent = projectionLink.href;
   $("#created-room").hidden = false;
-  $("#export-csv").disabled = false;
-  $("#export-notes").disabled = false;
-  $("#google-backfill").hidden = sourceType !== "google_sheet";
+  const exportCsv = $("#export-csv");
+  if (exportCsv) exportCsv.disabled = false;
+  const googleBackfill = $("#google-backfill");
+  if (googleBackfill) googleBackfill.hidden = sourceType !== "google_sheet";
   if ($("#create-room-form")) $("#create-room-form").hidden = true;
 }
 

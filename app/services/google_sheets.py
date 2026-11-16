@@ -60,13 +60,9 @@ def build_google_services(settings=None):
         str(credential_file),
         scopes=[
             "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive.readonly",
         ],
     )
-    return (
-        build("sheets", "v4", credentials=credentials, cache_discovery=False),
-        build("drive", "v3", credentials=credentials, cache_discovery=False),
-    )
+    return build("sheets", "v4", credentials=credentials, cache_discovery=False)
 
 
 def _cell_value(cell: dict):
@@ -114,17 +110,16 @@ def spreadsheet_to_xlsx(spreadsheet: dict, gid: int | None = None) -> tuple[byte
 
 
 class GoogleSheetsAdapter:
-    def __init__(self, sheets_service=None, drive_service=None):
+    def __init__(self, sheets_service=None):
         self.sheets_service = sheets_service
-        self.drive_service = drive_service
 
     def _services(self):
-        if self.sheets_service is None or self.drive_service is None:
-            self.sheets_service, self.drive_service = build_google_services()
-        return self.sheets_service, self.drive_service
+        if self.sheets_service is None:
+            self.sheets_service = build_google_services()
+        return self.sheets_service
 
     def import_sheet(self, reference: GoogleSheetReference):
-        sheets, drive = self._services()
+        sheets = self._services()
         try:
             source = sheets.spreadsheets().get(
                 spreadsheetId=reference.spreadsheet_id,
@@ -132,13 +127,7 @@ class GoogleSheetsAdapter:
                 fields="spreadsheetId,properties(title),sheets(properties(sheetId,title),merges,data(startRow,startColumn,rowData(values(userEnteredValue,formattedValue))))",
             ).execute()
             data, title, gid = spreadsheet_to_xlsx(source, reference.gid)
-            snapshot = drive.files().export(
-                fileId=reference.spreadsheet_id,
-                mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            ).execute()
-            if isinstance(snapshot, str):
-                snapshot = snapshot.encode("latin1")
-            return data, title, gid, bytes(snapshot)
+            return data, title, gid
         except GoogleSheetsError:
             raise
         except Exception as exc:
@@ -148,7 +137,7 @@ class GoogleSheetsAdapter:
             raise GoogleSheetsError("讀取 Google Sheet 失敗，請檢查連結與 API 設定。", "google_api_error") from exc
 
     def read_cells(self, spreadsheet_id: str, worksheet_name: str, coordinates: list[str]) -> dict[str, str | None]:
-        sheets, _ = self._services()
+        sheets = self._services()
         escaped = worksheet_name.replace("'", "''")
         ranges = [f"'{escaped}'!{cell}" for cell in coordinates]
         try:
@@ -168,7 +157,7 @@ class GoogleSheetsAdapter:
         return values
 
     def write_cells(self, spreadsheet_id: str, sheet_id: int, cells: list[dict]) -> None:
-        sheets, _ = self._services()
+        sheets = self._services()
         from openpyxl.utils.cell import coordinate_to_tuple
 
         requests = []

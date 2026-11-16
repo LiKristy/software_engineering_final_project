@@ -1,13 +1,11 @@
 import json
-import zipfile
 import csv
-from io import BytesIO, StringIO
+from io import StringIO
 
-from fastapi import APIRouter, Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, Form, Header, HTTPException
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from app.config import get_settings
 from app.database import Database
 from app.guided_notes import GuidedNotesError
 from app.repositories.room_repository import RoomRepository
@@ -37,37 +35,21 @@ def read_room(room_id: str, service: RoomService = Depends(get_room_service)):
 
 @api_router.post("/rooms")
 async def create_room(
-    file: UploadFile | None = File(default=None),
-    sheet_url: str | None = Form(default=None),
+    sheet_url: str = Form(...),
     max_wins: int | None = Form(default=None),
     cooldown_seconds: int = Form(default=30, ge=0, le=3600),
     question_bundles: str = Form(default="[]"),
     service: RoomService = Depends(get_room_service),
     google_adapter: GoogleSheetsAdapter = Depends(get_google_sheets_adapter),
 ):
-    settings = get_settings()
     try:
-        if bool(file) == bool(sheet_url):
-            raise ValueError("請上傳 .xlsx 檔案或提供 Google Sheet 連結其中一種。")
         bundles = json.loads(question_bundles)
         if not isinstance(bundles, list) or any(not isinstance(group, list) for group in bundles):
             raise ValueError("題組格式錯誤。")
-        if sheet_url:
-            result = service.create_room_from_google_sheet(
-                sheet_url, bundles, max_wins, adapter=google_adapter,
-                cooldown_seconds=cooldown_seconds,
-            )
-        else:
-            data = await file.read(settings.max_upload_bytes + 1)
-            if len(data) > settings.max_upload_bytes:
-                raise HTTPException(status_code=413, detail="檔案超過上傳大小限制。")
-            if not zipfile.is_zipfile(BytesIO(data)):
-                raise HTTPException(status_code=400, detail="請上傳有效的 .xlsx 試算表。")
-            with zipfile.ZipFile(BytesIO(data)) as workbook_zip:
-                total_expanded = sum(item.file_size for item in workbook_zip.infolist())
-                if total_expanded > 50 * 1024 * 1024:
-                    raise HTTPException(status_code=413, detail="試算表解壓後超過大小限制。")
-            result = service.create_room(data, file.filename or "notes.xlsx", max_wins, bundles, cooldown_seconds=cooldown_seconds)
+        result = service.create_room_from_google_sheet(
+            sheet_url, bundles, max_wins, adapter=google_adapter,
+            cooldown_seconds=cooldown_seconds,
+        )
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="題組設定格式錯誤。") from exc
     except GuidedNotesError as exc:
@@ -220,16 +202,6 @@ def export_history(room_id: str, x_teacher_token: str | None = Header(default=No
             writer.writerow([answer["question"], answer["slot"], submission["group_name"], answer["answer"], submission["received_at"], submission["rank"], submission["bundle_id"], submission["review_status"]])
     body = ("\ufeff" + output.getvalue()).encode("utf-8")
     return Response(body, media_type="text/csv; charset=utf-8", headers={"Content-Disposition": f'attachment; filename="{room_id}-history.csv"'})
-
-
-@api_router.get("/rooms/{room_id}/export/guided-notes.xlsx")
-def export_notes(room_id: str, x_teacher_token: str | None = Header(default=None), service: RoomService = Depends(get_room_service)):
-    try:
-        service.require_teacher(room_id, x_teacher_token)
-        data = service.export_guided_notes(room_id)
-    except RoomError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    return Response(data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", headers={"Content-Disposition": f'attachment; filename="{room_id}-guided-notes.xlsx"'})
 
 
 @api_router.post("/rooms/{room_id}/google-sheet/backfill")
