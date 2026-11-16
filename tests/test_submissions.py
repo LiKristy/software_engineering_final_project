@@ -23,7 +23,7 @@ def test_atomic_bundle_submission_ranking_review_and_cap(tmp_path):
     try:
         with TestClient(app) as client:
             app.state.database = database
-            room = client.post("/api/rooms", files={"file": ("notes.xlsx", NOTES.read_bytes())}, data={"max_wins": "2", "question_bundles": '[["Q3","Q4"]]'}).json()
+            room = client.post("/api/rooms", files={"file": ("notes.xlsx", NOTES.read_bytes())}, data={"max_wins": "2", "cooldown_seconds": "0", "question_bundles": '[["Q3","Q4"]]'}).json()
             questions = client.get(f"/api/rooms/{room['room_id']}/questions").json()["questions"]
             groups = [client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": f"第 {i} 組"}).json() for i in range(1, 4)]
             client.post(f"/api/rooms/{room['room_id']}/start", headers={"X-Teacher-Token": room["teacher_token"]})

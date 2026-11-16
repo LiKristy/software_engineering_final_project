@@ -71,6 +71,18 @@ function initTeacher() {
   const form = $("#create-room-form");
   if (!form) return;
   restoreTeacher();
+  const sourceRadios = [...form.querySelectorAll('[name="source_mode"]')];
+  const syncSourceFields = () => {
+    const google = form.elements.source_mode.value === "google";
+    form.elements.file.disabled = google;
+    form.elements.file.required = !google;
+    form.elements.sheet_url.disabled = !google;
+    form.elements.sheet_url.required = google;
+    $("#xlsx-source").hidden = google;
+    $("#google-source").hidden = !google;
+  };
+  sourceRadios.forEach(radio => radio.addEventListener("change", syncSourceFields));
+  syncSourceFields();
   form.addEventListener("submit", async event => {
     event.preventDefault();
     const message = $("#teacher-message");
@@ -81,8 +93,8 @@ function initTeacher() {
       data.set("question_bundles", JSON.stringify(parseBundles(form.elements.bundles.value)));
       if (!form.elements.max_wins.value) data.delete("max_wins");
       const room = await api("/api/rooms", { method: "POST", body: data });
-      sessionStorage.setItem("quiz-teacher", JSON.stringify({roomId: room.room_id, token: room.teacher_token, projectionUrl: room.projection_url}));
-      showTeacherRoom(room.room_id, room.projection_url);
+      sessionStorage.setItem("quiz-teacher", JSON.stringify({roomId: room.room_id, token: room.teacher_token, projectionUrl: room.projection_url, sourceType: room.source_type || (data.has("sheet_url") ? "google_sheet" : "upload")}));
+      showTeacherRoom(room.room_id, room.projection_url, room.source_type || (data.has("sheet_url") ? "google_sheet" : "upload"));
       message.textContent = `房間已建立，共 ${room.question_count} 題。`;
       form.hidden = true;
       await refreshGroups();
@@ -95,6 +107,25 @@ function initTeacher() {
   $("#end-race")?.addEventListener("click", () => changePhase("end"));
   $("#export-csv")?.addEventListener("click", () => downloadTeacherFile("history.csv", room => `/api/rooms/${encodeURIComponent(room.roomId)}/export/history.csv`));
   $("#export-notes")?.addEventListener("click", () => downloadTeacherFile("guided-notes.xlsx", room => `/api/rooms/${encodeURIComponent(room.roomId)}/export/guided-notes.xlsx`));
+  $("#google-backfill")?.addEventListener("click", backfillGoogleSheet);
+}
+
+async function backfillGoogleSheet() {
+  const room = JSON.parse(sessionStorage.getItem("quiz-teacher") || "null");
+  if (!room || room.sourceType !== "google_sheet") return;
+  const button = $("#google-backfill");
+  const message = $("#teacher-message");
+  button.disabled = true;
+  try {
+    const result = await api(`/api/rooms/${encodeURIComponent(room.roomId)}/google-sheet/backfill`, {
+      method: "POST", headers: {"X-Teacher-Token": room.token},
+    });
+    message.textContent = result.status === "already_synced" ? "Google Sheet 已是最新。" : `已回填 ${result.updated_cells} 個儲存格。`;
+  } catch (error) {
+    message.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 async function downloadTeacherFile(name, urlFor) {
@@ -107,7 +138,7 @@ async function downloadTeacherFile(name, urlFor) {
   link.click(); URL.revokeObjectURL(link.href);
 }
 
-function showTeacherRoom(roomId, projectionUrl) {
+function showTeacherRoom(roomId, projectionUrl, sourceType = "upload") {
   $("#room-code").textContent = roomId;
   const studentLink = $("#student-link");
   studentLink.href = `${location.origin}/student`;
@@ -118,13 +149,14 @@ function showTeacherRoom(roomId, projectionUrl) {
   $("#created-room").hidden = false;
   $("#export-csv").disabled = false;
   $("#export-notes").disabled = false;
+  $("#google-backfill").hidden = sourceType !== "google_sheet";
   if ($("#create-room-form")) $("#create-room-form").hidden = true;
 }
 
 function restoreTeacher() {
   const teacher = JSON.parse(sessionStorage.getItem("quiz-teacher") || "null");
   if (!teacher) return;
-  showTeacherRoom(teacher.roomId, teacher.projectionUrl || "");
+  showTeacherRoom(teacher.roomId, teacher.projectionUrl || "", teacher.sourceType || "upload");
   refreshGroups();
   connectRoom("teacher", teacher);
 }
@@ -198,6 +230,8 @@ async function joinRoom(roomId, groupName, token = null) {
     $("#team-label").textContent = joined.group_name;
     $("#phase-label").textContent = room.status === "active" ? "搶答進行中" : "等待搶答";
     renderQuestions(room.questions, $("#answer-board"));
+    window.quizSubmittedBundles = [];
+    window.quizCooldown = {active: false, remaining_seconds: 0};
     setStudentPhase(room.status);
     $("#student-room").hidden = false;
     $("#join-room-form").hidden = true;
@@ -213,9 +247,45 @@ function setStudentPhase(status) {
   const phase = $("#phase-label");
   if (!phase) return;
   phase.textContent = status === "active" ? "搶答進行中" : status === "ended" ? "搶答已結束" : "等待搶答";
+  const ended = status === "ended";
+  $("#answer-board").hidden = ended;
+  $("#results-board").hidden = !ended;
   const active = status === "active";
-  $("#answer-board")?.querySelectorAll("input, .submit-bundle").forEach(control => { control.disabled = !active; });
+  applyStudentControlLocks(active);
   window.quizRoom = {...(window.quizRoom || {}), status};
+}
+
+function applyStudentControlLocks(active) {
+  const cooldown = window.quizCooldown?.active;
+  const submitted = new Set(window.quizSubmittedBundles || []);
+  document.querySelectorAll("#answer-board .question-card").forEach(card => {
+    const locked = !active || cooldown || submitted.has(card.dataset.bundleId);
+    card.querySelectorAll("input, .submit-bundle").forEach(control => { control.disabled = Boolean(locked); });
+  });
+}
+
+function applyCooldown(state) {
+  window.quizCooldown = state || {active: false, remaining_seconds: 0};
+  if (window.quizCooldownTimer) clearInterval(window.quizCooldownTimer);
+  if (window.quizCooldown.active) {
+    window.quizCooldownTimer = setInterval(() => {
+      const remaining = Math.max(0, window.quizCooldown.remaining_seconds - 1);
+      window.quizCooldown = {active: remaining > 0, remaining_seconds: remaining};
+      applyCooldownDisplay();
+      if (!remaining) clearInterval(window.quizCooldownTimer);
+    }, 1000);
+  }
+  applyCooldownDisplay();
+}
+
+function applyCooldownDisplay() {
+  const state = window.quizCooldown;
+  const label = $("#cooldown-status");
+  if (label) {
+    label.hidden = !state?.active;
+    label.textContent = state?.active ? `得題冷卻中，${state.remaining_seconds} 秒後可再次作答。` : "";
+  }
+  applyStudentControlLocks(window.quizRoom?.status === "active");
 }
 
 function renderTeacherProgress(progress) {
@@ -274,7 +344,9 @@ document.querySelector("#answer-board")?.addEventListener("click", async event =
   if (inputs.some(input => !input.value.trim())) { document.querySelector("#student-message").textContent = "請填寫所有空格。"; return; }
   button.disabled = true;
   try {
-    await api(`/api/rooms/${encodeURIComponent(room.roomId)}/submissions`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({group_id: room.groupId, group_token: room.token, bundle_id: button.dataset.bundleId, answers: Object.fromEntries(inputs.map(input => [input.dataset.slotId, input.value]))})});
+    const receipt = await api(`/api/rooms/${encodeURIComponent(room.roomId)}/submissions`, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({group_id: room.groupId, group_token: room.token, bundle_id: button.dataset.bundleId, answers: Object.fromEntries(inputs.map(input => [input.dataset.slotId, input.value]))})});
+    window.quizSubmittedBundles = [...new Set([...(window.quizSubmittedBundles || []), button.dataset.bundleId])];
+    applyCooldown(receipt.cooldown);
     card.querySelectorAll("input").forEach(input => { input.disabled = true; });
     button.textContent = "已送出";
     document.querySelector("#student-message").textContent = "已送出答案。";
@@ -303,9 +375,10 @@ function connectRoom(role, identity) {
         if (message.results) showResults(message.results);
       } else if (role === "student") {
         setStudentPhase(message.status);
+        window.quizSubmittedBundles = message.submitted_bundles || [];
+        applyCooldown(message.cooldown);
         for (const card of document.querySelectorAll(".question-card")) {
-          if ((message.submitted_bundles || []).includes(card.dataset.bundleId)) {
-            card.querySelectorAll("input, button").forEach(control => { control.disabled = true; });
+          if (window.quizSubmittedBundles.includes(card.dataset.bundleId)) {
             const status = document.createElement("p"); status.textContent = "已送出"; card.append(status);
           }
         }
@@ -328,6 +401,8 @@ function connectRoom(role, identity) {
       renderTeacherProgress(message.progress);
     } else if (message.type === "results.updated" && (role !== "student" || window.quizRoom?.status === "ended")) {
       showResults(message);
+    } else if (message.type === "cooldown.updated" && role === "student") {
+      applyCooldown(message);
     }
   });
   socket.addEventListener("close", () => {

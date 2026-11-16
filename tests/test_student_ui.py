@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 
 from fastapi.testclient import TestClient
 
@@ -18,6 +19,33 @@ def test_student_and_teacher_pages_are_served():
     assert 'data-page="student"' in student.text
     assert 'id="answer-board"' in student.text
     assert 'name="file"' in teacher.text
+    ids = re.findall(r'\bid="([^"]+)"', teacher.text)
+    assert len(ids) == len(set(ids))
+    assert 'id="teacher-progress"' in teacher.text
+    assert 'id="teacher-results"' in teacher.text
+    assert 'id="google-backfill"' in teacher.text
+    assert 'name="cooldown_seconds"' in teacher.text
+    assert 'id="cooldown-status"' in student.text
+
+
+def test_readme_documents_cooldown_and_bundle_cap_rules():
+    readme = Path("README.md").read_text(encoding="utf-8")
+    assert "得題冷卻秒數（預設 30，範圍 0–3600，0 停用）" in readme
+    assert "題組一次得主事件只開始一次冷卻" in readme
+    assert "題組內每題仍分別計入獲勝上限" in readme
+
+
+def test_student_phase_script_toggles_answer_and_result_views():
+    script = Path("app/static/app.js").read_text(encoding="utf-8")
+    assert '$("#answer-board").hidden = ended;' in script
+    assert '$("#results-board").hidden = !ended;' in script
+    assert 'message.status === "ended" && message.results' in script
+
+
+def test_teacher_websocket_updates_target_single_progress_and_result_elements():
+    script = Path("app/static/app.js").read_text(encoding="utf-8")
+    assert 'document.querySelector("#teacher-progress")' in script
+    assert 'document.querySelector("#results-board") || document.querySelector("#teacher-results")' in script
 
 
 def test_question_api_returns_exact_fields_for_both_templates(tmp_path):

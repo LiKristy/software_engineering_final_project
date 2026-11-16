@@ -1,4 +1,5 @@
 from pathlib import Path
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -110,5 +111,78 @@ def test_submission_events_are_filtered_by_role_and_group(tmp_path):
                 import asyncio
                 asyncio.run(connections.broadcast_group(room["room_id"], groups[1]["group_id"], {"type": "probe"}))
                 assert other.receive_json() == {"type": "probe"}
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_cooldown_is_private_and_restored_on_reconnect(tmp_path):
+    database = Database(tmp_path / "cooldown-events.sqlite3")
+    database.migrate()
+    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    try:
+        with TestClient(app) as client:
+            app.state.database = database
+            room = client.post("/api/rooms", files={"file": ("single.xlsx", SINGLE.read_bytes())}).json()
+            groups = [client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": f"第 {i} 組"}).json() for i in (1, 2)]
+            client.post(f"/api/rooms/{room['room_id']}/start", headers={"X-Teacher-Token": room["teacher_token"]})
+            with client.websocket_connect(f"/ws/{room['room_id']}") as own, client.websocket_connect(f"/ws/{room['room_id']}") as other:
+                own.send_json({"role": "student", "group_id": groups[0]["group_id"], "token": groups[0]["group_token"]})
+                other.send_json({"role": "student", "group_id": groups[1]["group_id"], "token": groups[1]["group_token"]})
+                own_snapshot, other_snapshot = own.receive_json(), other.receive_json()
+                assert not own_snapshot["cooldown"]["active"]
+                question = client.get(f"/api/rooms/{room['room_id']}/questions").json()["questions"][0]
+                submitted = client.post(
+                    f"/api/rooms/{room['room_id']}/submissions",
+                    json={"group_id": groups[0]["group_id"], "group_token": groups[0]["group_token"], "bundle_id": "Q1", "answers": {question["slots"][0]["id"]: "私密答案"}},
+                )
+                assert submitted.status_code == 200
+                assert own.receive_json()["type"] == "submission.saved"
+                event = own.receive_json()
+                assert event["type"] == "cooldown.updated" and event["active"]
+                other.send_json({"type": "ping"})
+                assert other.receive_json() == {"type": "pong"}
+                duplicate = client.websocket_connect(f"/ws/{room['room_id']}")
+                with duplicate as blocked:
+                    blocked.send_json({"role": "student", "group_id": groups[0]["group_id"], "token": groups[0]["group_token"]})
+                    from starlette.websockets import WebSocketDisconnect
+                    with pytest.raises(WebSocketDisconnect):
+                        blocked.receive_json()
+            with client.websocket_connect(f"/ws/{room['room_id']}") as resumed:
+                resumed.send_json({"role": "student", "group_id": groups[0]["group_id"], "token": groups[0]["group_token"]})
+                snapshot = resumed.receive_json()
+                assert snapshot["cooldown"]["active"]
+                assert snapshot["submitted_bundles"] == ["Q1"]
+    finally:
+        app.dependency_overrides.clear()
+
+
+def test_students_only_receive_answers_after_activity_ends(tmp_path):
+    database = Database(tmp_path / "result-view.sqlite3")
+    database.migrate()
+    app.dependency_overrides[get_room_service] = lambda: RoomService(RoomRepository(database))
+    try:
+        with TestClient(app) as client:
+            app.state.database = database
+            room = client.post("/api/rooms", files={"file": ("single.xlsx", SINGLE.read_bytes())}, data={"cooldown_seconds": "0"}).json()
+            first = client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": "第 1 組"}).json()
+            second = client.post(f"/api/rooms/{room['room_id']}/join", json={"group_name": "第 2 組"}).json()
+            client.post(f"/api/rooms/{room['room_id']}/start", headers={"X-Teacher-Token": room["teacher_token"]})
+            with client.websocket_connect(f"/ws/{room['room_id']}") as student:
+                student.send_json({"role": "student", "group_id": second["group_id"], "token": second["group_token"]})
+                snapshot = student.receive_json()
+                assert "results" not in snapshot and "progress" not in snapshot
+                question = client.get(f"/api/rooms/{room['room_id']}/questions").json()["questions"][0]
+                client.post(
+                    f"/api/rooms/{room['room_id']}/submissions",
+                    json={"group_id": first["group_id"], "group_token": first["group_token"], "bundle_id": "Q1", "answers": {question["slots"][0]["id"]: "全班答案"}},
+                )
+                student.send_json({"type": "ping"})
+                assert student.receive_json() == {"type": "pong"}
+                client.post(f"/api/rooms/{room['room_id']}/end", headers={"X-Teacher-Token": room["teacher_token"]})
+                assert student.receive_json()["type"] == "phase.changed"
+                results = student.receive_json()
+                assert results["type"] == "results.updated"
+                assert results["winners"]["Q1"]["group_name"] == "第 1 組"
+                assert results["winners"]["Q1"]["answers"][0]["answer"] == "全班答案"
     finally:
         app.dependency_overrides.clear()
