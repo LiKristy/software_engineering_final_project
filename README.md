@@ -36,11 +36,18 @@ uv run uvicorn app.main:app --reload
 
 ### Guided Notes 範本
 
-系統從 Google Sheet 讀取題號與答案空格欄位，也支援 `[Q1]` 這類填空標籤；建立房間時會將必要的題目結構與欄位映射保存在房間資料中。回填直接寫入原始 Google Sheet，不產生講義副本。驗收用的解析器範本 fixture 位於 `tests/fixtures/`。
+#### 老師使用：準備題目表單
+
+1. 將當次搶答題目放在 Google Sheet 最新的工作表分頁，並將該分頁移到分頁列最右側。若新分頁放在其他位置，系統仍會依右至左順序選擇第一個符合格式的分頁。
+2. 表格需有可辨識的「題號」與「作答」欄；「題目」欄可提供題目敘述，沒有題目欄時仍可依題號和答案格建立房間。題組的同題多列可在「作答」欄使用 `(1)`、`(2)` 標記，系統會依列順序顯示題目與標記。分頁名稱不限於「學習單」。
+3. 建房連結不帶 `gid` 時，系統會由最右側分頁往左尋找第一個符合題號與答案格格式的分頁。若要固定使用某一分頁，請在試算表網址保留 `?gid=工作表ID` 或 `#gid=工作表ID`。
+4. 在 Google Cloud Console 的「IAM 與管理」→「服務帳戶」頁面找到此系統使用的 Service Account 電子郵件；也可在本機憑證 JSON 的 `client_email` 欄位查看。按 Google Sheet 的「共用」，將該電子郵件加入共用對象。建立房間至少需要檢視者權限；要回填得主答案則需編輯者權限。
+
+系統從 Google Sheet 讀取題號、題目文字與答案空格欄位；搶答開始後，學生會同時看到題號及題目文字。建立房間時會將必要的題目結構與欄位映射保存在房間資料中。回填直接寫入原始 Google Sheet，不產生講義副本。驗收用的解析器範本 fixture 位於 `tests/fixtures/`。
 
 冷卻從組別成為目前有效得主時開始；題組一次得主事件只開始一次冷卻，但題組內每題仍分別計入獲勝上限。駁回得主會重算得主，解除已失效且沒有其他有效得主來源的原組冷卻，並為遞補組別啟動冷卻。冷卻期限由伺服器交易判斷，學生頁倒數僅供顯示。
 
-建立 Google Cloud 專案並啟用 Google Sheets API，建立 Service Account，將來源試算表分享給該 Service Account 電子郵件；若要回填，請授予編輯權限。老師貼標準格式 `https://docs.google.com/spreadsheets/d/SPREADSHEET_ID/edit`，也可用 `?gid=工作表ID` 或 `#gid=工作表ID` 指定工作表。系統只接受 HTTPS 的 `docs.google.com/spreadsheets/d/...` 連結。將 Service Account JSON 放入被忽略的 `credential/` 目錄，在 `.env` 設定相對於 repository 根目錄的路徑，例如 `GOOGLE_SERVICE_ACCOUNT_FILE=credential/service-account.json`。絕不可複製金鑰內容到 repo、文件、日誌或畫面。建立房間一律使用 Google Sheet；系統不提供 `.xlsx` 上傳或副本下載。
+建立 Google Cloud 專案並啟用 Google Sheets API，建立 Service Account。將 Service Account JSON 放入被忽略的 `credential/` 目錄，在 `.env` 設定相對於 repository 根目錄的路徑，例如 `GOOGLE_SERVICE_ACCOUNT_FILE=credential/service-account.json`。絕不可複製金鑰內容到 repo、文件、日誌或畫面。系統只接受 HTTPS 的 `docs.google.com/spreadsheets/d/...` 連結；建立房間一律使用 Google Sheet，不提供 `.xlsx` 上傳或副本下載。
 
 ## 設定
 

@@ -38,6 +38,9 @@ button.danger { border-color: #a23c39; background: #b94b46; color: white; }
 .question-card h2, .question-block h3 { margin: 0; }
 .question-block { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; padding: 12px 0; border-top: 1px solid #edf1f2; }
 .question-card > .question-block:first-of-type { border-top: 0; }
+.question-prompts { grid-column: 1 / -1; display: grid; gap: 6px; }
+.question-prompt { margin: 0; line-height: 1.55; }
+.question-prompt-marker { font-weight: 750; color: #24645f; }
 .answer-field { font-size: .9rem; }
 .projector-shell { width: min(1400px, calc(100% - 48px)); margin: 4vh auto; }
 .projector-shell h1 { font-size: clamp(2.5rem, 7vw, 5.5rem); }

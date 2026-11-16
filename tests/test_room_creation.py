@@ -53,12 +53,17 @@ def test_create_room_from_template_and_store_tokens_as_hashes(tmp_path):
     assert payload["teacher_token"]
     assert payload["projection_url"].startswith("/projector/")
     assert payload["questions"][2]["bundle_id"] == "bundle:Q3:Q4"
+    assert all(not question["prompts"] for question in payload["questions"])
     with database.connect() as connection:
         room = connection.execute("SELECT * FROM rooms WHERE id = ?", (payload["room_id"],)).fetchone()
         q3 = connection.execute("SELECT bundle_id FROM questions WHERE room_id = ? AND question_number = 'Q3'", (payload["room_id"],)).fetchone()
     assert room["cooldown_seconds"] == 30
     assert room["teacher_token_hash"] != payload["teacher_token"]
     assert q3["bundle_id"] == "bundle:Q3:Q4"
+    saved_questions = RoomRepository(database).get_questions(payload["room_id"])
+    assert [prompt["marker"] for prompt in saved_questions[0]["prompts"]] == [""]
+    assert saved_questions[0]["prompts"][0]["text"]
+    assert saved_questions[0]["prompts"][0]["marker"] == ""
 
 
 def test_create_room_rejects_file_upload_without_sheet_url(tmp_path):
@@ -158,11 +163,13 @@ def test_create_room_from_google_sheet_stores_mapping_and_internal_parser_workbo
     with database.connect() as connection:
         room = connection.execute("SELECT source_type, google_spreadsheet_id, google_sheet_gid, workbook_blob FROM rooms").fetchone()
         slots = connection.execute("SELECT COUNT(*) FROM answer_slots WHERE imported_baseline_value IS NOT NULL").fetchone()[0]
+        prompt_count = connection.execute("SELECT COUNT(*) FROM question_prompts").fetchone()[0]
     assert room["source_type"] == "google_sheet"
     assert room["google_spreadsheet_id"] == "1dHJOnfihH0J2OPeqzkMofJD17TXMsT10PfVDbCqW7aQ"
     assert room["google_sheet_gid"] == 77
     assert bytes(room["workbook_blob"])
     assert slots == 0
+    assert prompt_count == 6
 
 
 @pytest.mark.parametrize(("status", "expected"), [("permission_denied", 403), ("invalid_sheet", 400)])

@@ -60,6 +60,10 @@ async def create_room(
         raise HTTPException(status_code=403 if exc.code == "permission_denied" else 400, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # Room creation is unauthenticated; do not expose prompts before the race starts.
+    result["questions"] = [
+        {**question, "prompts": []} for question in result.get("questions", [])
+    ]
     return JSONResponse(result)
 
 

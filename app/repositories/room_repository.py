@@ -62,11 +62,17 @@ class RoomRepository:
                     "SELECT id, marker, worksheet_name, cell_coordinate FROM answer_slots WHERE question_id = ? ORDER BY marker, cell_coordinate",
                     (question["id"],),
                 ).fetchall()
+                prompts = connection.execute(
+                    "SELECT row_order, answer_marker AS marker, prompt_text AS text "
+                    "FROM question_prompts WHERE question_id = ? ORDER BY row_order",
+                    (question["id"],),
+                ).fetchall()
                 result.append(
                     {
                         **dict(question),
                         "id": question["public_id"],
                         "slots": [dict(slot) for slot in slots],
+                        "prompts": [dict(prompt) for prompt in prompts],
                     }
                 )
             return result
@@ -210,6 +216,12 @@ class RoomRepository:
                     "VALUES (?, ?, ?, ?, ?)",
                     (question_db_id, room["id"], question["id"], question["bundle_id"], question["ordinal"]),
                 )
+                for prompt in question.get("prompts", []):
+                    connection.execute(
+                        "INSERT INTO question_prompts "
+                        "(question_id, row_order, answer_marker, prompt_text) VALUES (?, ?, ?, ?)",
+                        (question_db_id, prompt["row_order"], prompt["marker"], prompt["text"]),
+                    )
                 for slot in question["slots"]:
                     connection.execute(
                         "INSERT INTO answer_slots "

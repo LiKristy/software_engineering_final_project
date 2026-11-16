@@ -92,6 +92,14 @@ class RoomService:
                     "room_id": room_id,
                     "bundle_id": bundle_by_question[question.id],
                     "ordinal": question.ordinal,
+                    "prompts": [
+                        {
+                            "row_order": prompt.row_order,
+                            "marker": prompt.marker,
+                            "text": prompt.text,
+                        }
+                        for prompt in question.prompts
+                    ],
                     "slots": [
                         {
                             "id": slot.id,
@@ -155,7 +163,11 @@ class RoomService:
         room = self.rooms.get(room_id)
         if room is None:
             raise RoomError("找不到房間。", 404)
-        return {"room_id": room_id, "status": room["status"], "questions": self.rooms.get_questions(room_id)}
+        questions = self.rooms.get_questions(room_id)
+        if room["status"] != "active":
+            for question in questions:
+                question["prompts"] = []
+        return {"room_id": room_id, "status": room["status"], "questions": questions}
 
     def require_teacher(self, room_id: str, token: str | None):
         room = self.rooms.get(room_id)
@@ -207,12 +219,16 @@ class RoomService:
         room = self.rooms.get(room_id)
         if room is None:
             raise RoomError("找不到房間。", 404)
+        questions = self.rooms.get_questions(room_id)
+        if role != "student" or room["status"] != "active":
+            for question in questions:
+                question["prompts"] = []
         state = {
             "type": "snapshot",
             "room_id": room_id,
             "role": role,
             "status": room["status"],
-            "questions": self.rooms.get_questions(room_id),
+            "questions": questions,
         }
         if role == "teacher":
             state["groups"] = self.list_groups(room_id)
@@ -288,6 +304,8 @@ class RoomService:
 
     def results(self, room_id: str):
         questions = self.rooms.get_questions(room_id)
+        for question in questions:
+            question["prompts"] = []
         progress = self.progress(room_id)
         room = self.rooms.get(room_id)
         winners: dict[str, dict] = {}

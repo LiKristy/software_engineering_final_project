@@ -9,6 +9,33 @@ from app.services.google_sheets import GoogleSheetReference, GoogleSheetsAdapter
 VALID_ID = "1dHJOnfihH0J2OPeqzkMofJD17TXMsT10PfVDbCqW7aQ"
 
 
+def _sheet_from_fixture(filename, title, gid):
+    workbook = load_workbook(BytesIO(open(f"tests/fixtures/{filename}", "rb").read()), data_only=False)
+    worksheet = workbook[workbook.sheetnames[0]]
+    rows = []
+    for row in worksheet.iter_rows():
+        values = []
+        for cell in row:
+            value = {"userEnteredValue": {"stringValue": str(cell.value)}} if cell.value is not None else {}
+            values.append(value)
+        rows.append({"values": values})
+    merges = [
+        {
+            "startRowIndex": area.min_row - 1,
+            "endRowIndex": area.max_row,
+            "startColumnIndex": area.min_col - 1,
+            "endColumnIndex": area.max_col,
+        }
+        for area in worksheet.merged_cells.ranges
+    ]
+    workbook.close()
+    return {
+        "properties": {"sheetId": gid, "title": title},
+        "merges": merges,
+        "data": [{"startRow": 0, "startColumn": 0, "rowData": rows}],
+    }
+
+
 @pytest.mark.parametrize(
     ("url", "gid"),
     [
@@ -80,7 +107,10 @@ def test_google_grid_adapter_preserves_template_questions_groups_and_slots(fixtu
 def test_readme_documents_google_only_source_and_writeback():
     readme = open("README.md", encoding="utf-8").read()
     assert "啟用 Google Sheets API" in readme
-    assert "Service Account 電子郵件" in readme
+    assert "最新的工作表分頁" in readme
+    assert "client_email" in readme
+    assert "檢視者權限" in readme and "編輯者權限" in readme
+    assert "不帶 `gid`" in readme
     assert "GOOGLE_SERVICE_ACCOUNT_FILE" in readme
     assert "不提供 `.xlsx` 上傳或副本下載" in readme
     assert "完整歷史 CSV" in readme
@@ -141,3 +171,41 @@ def test_google_adapter_reads_sheet_and_performs_one_atomic_batch_request():
     request = sheets.batch["body"]["requests"][0]["updateCells"]
     assert request["range"]["sheetId"] == 77
     assert request["rows"][0]["values"][0]["userEnteredValue"]["stringValue"] == "回填值"
+
+
+def test_google_adapter_selects_rightmost_valid_sheet_without_gid():
+    response = {"sheets": [
+        _sheet_from_fixture("guided-notes-single.xlsx", "舊題目", 11),
+        _sheet_from_fixture("guided-notes-group.xlsx", "較新題目", 22),
+        {"properties": {"sheetId": 33, "title": "最新空白分頁"}, "merges": [], "data": []},
+    ]}
+    adapter = GoogleSheetsAdapter(FakeSheetsService(response))
+
+    data, title, gid = adapter.import_sheet(GoogleSheetReference(VALID_ID, None))
+
+    assert (title, gid) == ("較新題目", 22)
+    assert [question.id for question in parse_guided_notes(data, "selected.xlsx", title).questions] == [
+        "Q1", "Q2", "Q3", "Q4"
+    ]
+
+
+def test_google_adapter_honors_gid_and_does_not_fallback_from_invalid_sheet():
+    response = {"sheets": [
+        _sheet_from_fixture("guided-notes-single.xlsx", "有效舊表", 11),
+        {"properties": {"sheetId": 33, "title": "指定空白表"}, "merges": [], "data": []},
+    ]}
+    adapter = GoogleSheetsAdapter(FakeSheetsService(response))
+
+    with pytest.raises(GoogleSheetsError, match="題號"):
+        adapter.import_sheet(GoogleSheetReference(VALID_ID, 33))
+
+
+def test_google_adapter_rejects_workbook_without_any_valid_worksheet():
+    response = {"sheets": [
+        {"properties": {"sheetId": 33, "title": "空白表"}, "merges": [], "data": []},
+        {"properties": {"sheetId": 34, "title": "無欄位表"}, "merges": [], "data": []},
+    ]}
+    adapter = GoogleSheetsAdapter(FakeSheetsService(response))
+
+    with pytest.raises(GoogleSheetsError):
+        adapter.import_sheet(GoogleSheetReference(VALID_ID, None))

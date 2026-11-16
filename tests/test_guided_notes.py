@@ -30,6 +30,40 @@ def test_imports_real_group_template_and_answer_markers():
         ("(1)", "H5"), ("(2)", "H6")
     ]
     assert notes.questions[0].bundle_id == "Q1"
+    prompts = notes.questions[0].prompts
+    assert [prompt.marker for prompt in prompts] == ["(1)", "(2)"]
+    assert [prompt.row_order for prompt in prompts] == sorted(prompt.row_order for prompt in prompts)
+    assert all(prompt.text for prompt in prompts)
+
+
+def test_parser_accepts_a_non_default_worksheet_name():
+    source = load_workbook(f"{FIXTURES}/guided-notes-single.xlsx")
+    source.active.title = "最新題目"
+    buffer = BytesIO()
+    source.save(buffer)
+    source.close()
+
+    notes = parse_guided_notes(buffer.getvalue(), "renamed.xlsx")
+
+    assert notes.worksheet_name == "最新題目"
+    assert notes.questions[0].prompts[0].text
+
+
+def test_parser_allows_missing_question_text_column():
+    source = load_workbook(f"{FIXTURES}/guided-notes-single.xlsx")
+    ws = source["學習單"]
+    for row in ws.iter_rows():
+        cell = ws.cell(row[0].row, 3)
+        if cell.__class__.__name__ != "MergedCell":
+            cell.value = None
+    buffer = BytesIO()
+    source.save(buffer)
+    source.close()
+
+    notes = parse_guided_notes(buffer.getvalue(), "without-prompts.xlsx")
+
+    assert notes.questions
+    assert all(not question.prompts for question in notes.questions)
 
 
 def test_explicit_q_tag_maps_to_its_cell():

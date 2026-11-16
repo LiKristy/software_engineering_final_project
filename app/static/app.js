@@ -32,6 +32,24 @@ function renderQuestions(questions, board) {
         label.textContent = question.id;
         questionBlock.append(label);
       }
+      const prompts = (question.prompts || []).filter(prompt => prompt.text);
+      if (prompts.length) {
+        const promptList = document.createElement("div");
+        promptList.className = "question-prompts";
+        for (const prompt of prompts) {
+          const line = document.createElement("p");
+          line.className = "question-prompt";
+          if (prompt.marker) {
+            const marker = document.createElement("span");
+            marker.className = "question-prompt-marker";
+            marker.textContent = prompt.marker;
+            line.append(marker, document.createTextNode(" "));
+          }
+          line.append(document.createTextNode(prompt.text));
+          promptList.append(line);
+        }
+        questionBlock.append(promptList);
+      }
       for (const slot of question.slots) {
         const label = document.createElement("label");
         label.className = "answer-field";
@@ -243,6 +261,18 @@ function setStudentPhase(status) {
   window.quizRoom = {...(window.quizRoom || {}), status};
 }
 
+async function reloadActiveStudentQuestions() {
+  const room = window.quizRoom;
+  if (!room) return;
+  try {
+    const response = await api(`/api/rooms/${encodeURIComponent(room.roomId)}/questions`);
+    renderQuestions(response.questions, $("#answer-board"));
+    setStudentPhase(response.status);
+  } catch (error) {
+    document.querySelector("#student-message").textContent = error.message;
+  }
+}
+
 function applyStudentControlLocks(active) {
   const cooldown = window.quizCooldown?.active;
   const submitted = new Set(window.quizSubmittedBundles || []);
@@ -378,7 +408,10 @@ function connectRoom(role, identity) {
       }
     } else if (message.type === "phase.changed") {
       if (role === "teacher") setTeacherPhase(message.status);
-      if (role === "student") setStudentPhase(message.status);
+      if (role === "student") {
+        if (message.status === "active") reloadActiveStudentQuestions();
+        else setStudentPhase(message.status);
+      }
       if (role === "projection") {
         if (message.status === "active") showProjectionCountdown();
         else if (message.status === "ended") document.querySelector("#projector-countdown").textContent = "搶答結束";

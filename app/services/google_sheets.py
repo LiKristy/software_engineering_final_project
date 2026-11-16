@@ -11,6 +11,7 @@ from openpyxl import Workbook
 from openpyxl.utils.cell import get_column_letter
 
 from app.config import get_settings
+from app.guided_notes import GuidedNotesError, parse_guided_notes
 
 
 class GoogleSheetsError(ValueError):
@@ -80,8 +81,7 @@ def spreadsheet_to_xlsx(spreadsheet: dict, gid: int | None = None) -> tuple[byte
     sheets = spreadsheet.get("sheets", [])
     selected = next((s for s in sheets if gid is not None and s.get("properties", {}).get("sheetId") == gid), None)
     if gid is None:
-        selected = next((s for s in sheets if s.get("properties", {}).get("title") == "學習單"), None)
-        selected = selected or (sheets[0] if sheets else None)
+        selected = sheets[-1] if sheets else None
     if selected is None:
         raise GoogleSheetsError("連結指定的工作表不存在。", "sheet_not_found")
     props = selected.get("properties", {})
@@ -126,8 +126,35 @@ class GoogleSheetsAdapter:
                 includeGridData=True,
                 fields="spreadsheetId,properties(title),sheets(properties(sheetId,title),merges,data(startRow,startColumn,rowData(values(userEnteredValue,formattedValue))))",
             ).execute()
-            data, title, gid = spreadsheet_to_xlsx(source, reference.gid)
-            return data, title, gid
+            sheets_data = source.get("sheets", [])
+            if reference.gid is not None:
+                candidates = [
+                    item for item in sheets_data
+                    if item.get("properties", {}).get("sheetId") == reference.gid
+                ]
+                if not candidates:
+                    raise GoogleSheetsError("連結指定的工作表不存在。", "sheet_not_found")
+            else:
+                candidates = list(reversed(sheets_data))
+
+            last_format_error = None
+            for candidate in candidates:
+                candidate_gid = candidate.get("properties", {}).get("sheetId")
+                data, title, gid = spreadsheet_to_xlsx(
+                    {"sheets": [candidate]}, candidate_gid
+                )
+                try:
+                    parse_guided_notes(data, "google-export.xlsx", worksheet_name=title)
+                except GuidedNotesError as exc:
+                    last_format_error = exc
+                    if reference.gid is not None:
+                        raise GoogleSheetsError(str(exc), "invalid_sheet") from exc
+                    continue
+                return data, title, gid
+
+            if last_format_error:
+                raise GoogleSheetsError(str(last_format_error), "invalid_sheet")
+            raise GoogleSheetsError("試算表沒有可讀取的工作表。", "invalid_sheet")
         except GoogleSheetsError:
             raise
         except Exception as exc:

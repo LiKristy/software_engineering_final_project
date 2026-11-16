@@ -20,11 +20,19 @@ class AnswerSlot:
 
 
 @dataclass(frozen=True)
+class QuestionPrompt:
+    row_order: int
+    marker: str
+    text: str
+
+
+@dataclass(frozen=True)
 class Question:
     id: str
     ordinal: int
     bundle_id: str
     slots: tuple[AnswerSlot, ...]
+    prompts: tuple[QuestionPrompt, ...]
 
 
 @dataclass(frozen=True)
@@ -41,6 +49,7 @@ class ImportedNotes:
                     "ordinal": q.ordinal,
                     "bundle_id": q.bundle_id,
                     "slots": [asdict(slot) for slot in q.slots],
+                    "prompts": [asdict(prompt) for prompt in q.prompts],
                 }
                 for q in self.questions
             ],
@@ -71,18 +80,7 @@ def _merged_anchor(ws, row: int, column: int) -> str:
     return ws.cell(row, column).coordinate
 
 
-def parse_guided_notes(data: bytes, filename: str = "notes.xlsx") -> ImportedNotes:
-    if not filename.lower().endswith(".xlsx"):
-        raise GuidedNotesError("Google Sheet 匯出的試算表格式不受支援。")
-    try:
-        workbook = load_workbook(BytesIO(data), data_only=False)
-    except Exception as exc:
-        raise GuidedNotesError("無法讀取試算表，請確認檔案格式。") from exc
-
-    if "學習單" not in workbook.sheetnames:
-        raise GuidedNotesError("找不到「學習單」工作表。")
-    ws = workbook["學習單"]
-
+def _parse_worksheet(ws) -> ImportedNotes:
     header = None
     for row in ws.iter_rows(min_row=1, max_row=min(ws.max_row, 40)):
         labels = {_text(cell.value): cell.column for cell in row if cell.value is not None}
@@ -94,8 +92,10 @@ def parse_guided_notes(data: bytes, filename: str = "notes.xlsx") -> ImportedNot
 
     number_column = header["題號"]
     answer_column = header["作答"]
+    prompt_column = header.get("題目")
     question_rows: dict[int, str] = {}
     slots_by_question: dict[str, dict[tuple[str, str], AnswerSlot]] = {}
+    prompts_by_question: dict[str, list[QuestionPrompt]] = {}
     explicit_tag_rows: set[tuple[str, int]] = set()
 
     for row in range(1, ws.max_row + 1):
@@ -151,6 +151,11 @@ def parse_guided_notes(data: bytes, filename: str = "notes.xlsx") -> ImportedNot
             cell_coordinate=coordinate,
         )
         slots_by_question[question_id][(marker, coordinate)] = slot
+        prompt_text = _text(ws.cell(row, prompt_column).value) if prompt_column else ""
+        if prompt_text:
+            prompts_by_question.setdefault(question_id, []).append(
+                QuestionPrompt(row_order=row, marker=marker, text=prompt_text)
+            )
 
     if not slots_by_question:
         raise GuidedNotesError("找不到可辨識的題號或 [Qn] 填空標籤。")
@@ -168,10 +173,41 @@ def parse_guided_notes(data: bytes, filename: str = "notes.xlsx") -> ImportedNot
             ordinal=ordinal,
             bundle_id=question_id,
             slots=tuple(sorted(slots.values(), key=lambda slot: (slot.marker, slot.cell_coordinate))),
+            prompts=tuple(sorted(prompts_by_question.get(question_id, []), key=lambda prompt: prompt.row_order)),
         )
         for ordinal, (question_id, slots) in enumerate(ordered, start=1)
     )
-    workbook.close()
     return ImportedNotes(worksheet_name=ws.title, questions=questions)
+
+
+def parse_guided_notes(data: bytes, filename: str = "notes.xlsx", worksheet_name: str | None = None) -> ImportedNotes:
+    if not filename.lower().endswith(".xlsx"):
+        raise GuidedNotesError("Google Sheet 匯出的試算表格式不受支援。")
+    try:
+        workbook = load_workbook(BytesIO(data), data_only=False)
+    except Exception as exc:
+        raise GuidedNotesError("無法讀取試算表，請確認檔案格式。") from exc
+
+    if worksheet_name is not None:
+        candidates = [workbook[worksheet_name]] if worksheet_name in workbook.sheetnames else []
+        if not candidates:
+            workbook.close()
+            raise GuidedNotesError(f"找不到「{worksheet_name}」工作表。")
+    else:
+        candidates = list(reversed(workbook.worksheets))
+
+    errors = []
+    for worksheet in candidates:
+        try:
+            parsed = _parse_worksheet(worksheet)
+            workbook.close()
+            return parsed
+        except GuidedNotesError as exc:
+            errors.append(str(exc))
+
+    workbook.close()
+    if not candidates:
+        raise GuidedNotesError("試算表中沒有任何工作表。")
+    raise GuidedNotesError(errors[0] if errors else "找不到符合格式的工作表。")
 
 

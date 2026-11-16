@@ -189,3 +189,47 @@ def test_students_only_receive_answers_after_activity_ends(tmp_path):
                 assert results["winners"]["Q1"]["answers"][0]["answer"] == "全班答案"
     finally:
         app.dependency_overrides.clear()
+
+
+def test_websocket_prompt_visibility_is_limited_by_role_and_phase(tmp_path):
+    database = Database(tmp_path / "prompt-events.sqlite3")
+    database.migrate()
+    install_overrides(database)
+    try:
+        with TestClient(app) as client:
+            app.state.database = database
+            room = client.post("/api/rooms", data={"sheet_url": SHEET_URL}).json()
+            group = client.post(
+                f"/api/rooms/{room['room_id']}/join", json={"group_name": "題目測試組"}
+            ).json()
+            with client.websocket_connect(f"/ws/{room['room_id']}") as student, client.websocket_connect(f"/ws/{room['room_id']}") as teacher, client.websocket_connect(f"/ws/{room['room_id']}") as projection:
+                student.send_json({"role": "student", "group_id": group["group_id"], "token": group["group_token"]})
+                teacher.send_json({"role": "teacher", "token": room["teacher_token"]})
+                projection.send_json({"role": "projection", "token": room["projection_url"].split("#")[-1]})
+                waiting = [student.receive_json(), teacher.receive_json(), projection.receive_json()]
+                assert all(not question["prompts"] for snapshot in waiting for question in snapshot["questions"])
+
+                started = client.post(
+                    f"/api/rooms/{room['room_id']}/start",
+                    headers={"X-Teacher-Token": room["teacher_token"]},
+                )
+                assert started.status_code == 200
+                phase_events = [student.receive_json(), teacher.receive_json(), projection.receive_json()]
+                assert all(event["type"] == "phase.changed" and "prompts" not in event for event in phase_events)
+
+            active_questions = client.get(f"/api/rooms/{room['room_id']}/questions").json()["questions"]
+            prompt_text = active_questions[0]["prompts"][0]["text"]
+            assert prompt_text
+
+            with client.websocket_connect(f"/ws/{room['room_id']}") as student, client.websocket_connect(f"/ws/{room['room_id']}") as teacher, client.websocket_connect(f"/ws/{room['room_id']}") as projection:
+                student.send_json({"role": "student", "group_id": group["group_id"], "token": group["group_token"]})
+                teacher.send_json({"role": "teacher", "token": room["teacher_token"]})
+                projection.send_json({"role": "projection", "token": room["projection_url"].split("#")[-1]})
+                active_student, active_teacher, active_projection = (
+                    student.receive_json(), teacher.receive_json(), projection.receive_json()
+                )
+                assert active_student["status"] == "active"
+                assert any(prompt_text == prompt["text"] for question in active_student["questions"] for prompt in question["prompts"])
+                assert all(not question["prompts"] for snapshot in (active_teacher, active_projection) for question in snapshot["questions"])
+    finally:
+        app.dependency_overrides.clear()
